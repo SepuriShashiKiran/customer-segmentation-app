@@ -1,70 +1,89 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
-import pickle
+import pandas as pd
+import joblib
 from tensorflow.keras.models import load_model
-from sklearn.metrics.pairwise import cosine_similarity
 
+# -------------------------------
 # Load models
+# -------------------------------
 @st.cache_resource
-def load_models():
-    scaler = pickle.load(open('scaler.pkl', 'rb'))
-    kmeans = pickle.load(open('kmeans.pkl', 'rb'))
-    encoder = load_model('encoder.h5')
-    return scaler, kmeans, encoder
+def load_all():
+    scaler = joblib.load('scaler.pkl')
+    kmeans = joblib.load('kmeans.pkl')
+    encoder = load_model('encoder.keras')
+    data = pd.read_csv('rfm_data.csv')
+    return scaler, kmeans, encoder, data
 
-scaler, kmeans, encoder = load_models()
+scaler, kmeans, encoder, data = load_all()
 
-# Load data
-@st.cache_data
-def load_data():
-    return pd.read_csv('rfm_data.csv')
+st.title("Customer Segmentation System")
 
-rfm = load_data()
+# -------------------------------
+# Input Section
+# -------------------------------
+st.header("Enter Customer Data")
 
-# Compute latent features
-@st.cache_data
-def compute_latent(data):
-    scaled = scaler.transform(data[['Recency', 'Frequency', 'Monetary']])
-    return encoder.predict(scaled)
+recency = st.number_input("Recency (days)", min_value=0)
+frequency = st.number_input("Frequency", min_value=0)
+monetary = st.number_input("Monetary Value", min_value=0.0)
 
-latent_all = compute_latent(rfm)
-
-# Cluster labels (adjust based on your analysis)
-cluster_labels = {
-    0: "Low Value Customers",
-    1: "Churn Risk Customers",
-    2: "Regular Customers",
-    3: "High Value / VIP Customers"
-}
-
-# UI
-st.title("Retail Customer Segmentation System")
-
-st.sidebar.header("Customer Input")
-
-recency = st.sidebar.number_input("Recency", 0, 365, 30)
-frequency = st.sidebar.number_input("Frequency", 1, 500, 10)
-monetary = st.sidebar.number_input("Monetary", 0.0, 10000.0, 500.0)
-
+# -------------------------------
 # Prediction
-if st.sidebar.button("Predict"):
+# -------------------------------
+if st.button("Predict Segment"):
+
     input_data = np.array([[recency, frequency, monetary]])
-    
+
     scaled = scaler.transform(input_data)
-    latent = encoder.predict(scaled)
-    cluster = kmeans.predict(latent)[0]
+    encoded = encoder.predict(scaled)
+    cluster = kmeans.predict(encoded)[0]
 
-    segment = cluster_labels.get(cluster, "Unknown")
-    st.subheader(f"Predicted Segment: {segment}")
+    st.success(f"Cluster: {cluster}")
 
-    # Similar customers
-    similarity = cosine_similarity(latent_all, latent)
-    top_idx = similarity.flatten().argsort()[::-1][1:6]
+    # Segment labels
+    if cluster == 0:
+        st.write("Segment: Low Value")
+    elif cluster == 1:
+        st.write("Segment: Regular")
+    elif cluster == 2:
+        st.write("Segment: High Value")
+    else:
+        st.write("Segment: Premium")
 
-    st.subheader("Similar Customers")
-    st.dataframe(rfm.iloc[top_idx])
+# -------------------------------
+# Show Dataset
+# -------------------------------
+if st.checkbox("Show Dataset"):
+    st.dataframe(data.head())
 
-# Optional cluster summary
-if st.checkbox("Show Cluster Summary"):
-    st.dataframe(rfm.groupby('Cluster').mean())
+# -------------------------------
+# Cluster Insights
+# -------------------------------
+if st.checkbox("Show Cluster Insights"):
+    st.write(data.groupby('Cluster').mean())
+
+# -------------------------------
+# Similar Customers
+# -------------------------------
+if st.checkbox("Find Similar Customers"):
+
+    cust_id = st.number_input("Enter Customer ID")
+
+    if st.button("Find Similar"):
+
+        from sklearn.metrics.pairwise import cosine_similarity
+
+        features = data[['Recency','Frequency','Monetary']]
+        sim = cosine_similarity(features)
+
+        idx = data[data['CustomerID'] == cust_id].index
+
+        if len(idx) == 0:
+            st.error("Customer not found")
+        else:
+            idx = idx[0]
+            scores = sim[idx]
+            similar_idx = scores.argsort()[::-1][1:6]
+
+            st.write(data.iloc[similar_idx])
